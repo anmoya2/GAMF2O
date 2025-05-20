@@ -1,33 +1,17 @@
-import logging
 import os
 import numpy as np
 import random
-import tensorflow as tf
 import math
-from tensorflow import keras
-from model_dataset import *
 import time
 
 from sklearn.linear_model import LinearRegression
 
-n_exec = 1
-
-seed = n_exec
 
 
-INF = 100000
-logging.basicConfig(level=logging.DEBUG)
-
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-tf.get_logger().setLevel('INFO')
-
-
-os.environ['KMP_WARNINGS'] = 'off'
-N_EXEC = "output/exec_fashion"+str(n_exec)
 
 class Genetic_HB:
-    def __init__(self, type_attributes, ranges, n_at, generations=12, n_ind = 4, 
-        n_cut=4, delta=3.0, 
+    def __init__(self, type_attributes, ranges, n_at, model_wrapper, train_X, train_Y_one_hot, val_X, val_Y_one_hot, test_X, test_Y_one_hot, out_path,
+        train_config = None, include_acc = False, generations=12, n_ind = 4, n_cut=4, delta=3.0, epsilon=0.0005,
         seed = 1234, cut_el = 2.0, adaptive_w=True, per_to_pend = 0.5,
         cut_point_options = None, type_m=1, type_c=1, cuts=1, mut_percent = 0.05,
          hof_size = 2, w_init = 0.4, f_enf = None, options_mut = None):
@@ -38,10 +22,21 @@ class Genetic_HB:
         :param type attributes: type of attributes for creating gens of this type.
         :param ranges: ranges in which the parameters are included.
         :param n_at: total length of the individual.
+        :param model_wrapper: Wrapper of a DL model
+        :param train_X: Dataset for training (data)
+        :param train_Y_one_hot: Dataset for training (labels in one hot encoding)
+        :param val_X: Dataset for validation (data)
+        :param val_Y_one_hot: Dataset for validation (labels in one hot encoding)
+        :param test_X: Dataset for testing (data)
+        :param test_Y_one_hot: Dataset for testing (labels in one hot encoding)
+        :param out_path: Output path
+        :param train_config configuration for training
+        :param include_acc: Should the individual include the accuracy value?(Classification)
         :param generations: Maximum generations of the algorithm.
         :param n_ind: number of individuals of the population.
         :param n_cut: number of points of time in which the GA has to decide the individuals to continue training.
         :param delta: delta that controls the number of resources (epochs) that are assigned at each step.
+        :param epsilon: Threshold for convergence
         :param seed: random seed
         :param cut_el: value that controls the number of individuals that continue training at each step.
         :param adaptive_w: indicates if the value for loss and slope are fixed or adaptive.
@@ -66,6 +61,7 @@ class Genetic_HB:
         self._n_ind = n_ind
         self._best = None
         self._c_pop = []
+        self.out_path = out_path
         self._n_of_pairs = int(self._n_ind / 4)
         self._c_child_pop = []
         self._seed = seed
@@ -86,6 +82,7 @@ class Genetic_HB:
         self._mut_percent = mut_percent
         self._hof_size = hof_size
         self._hof = None
+        self.INF = 100000
         self._f_enf = f_enf
         w_loss_without_norm = [self._f_enf(x, self._w_init) for x in range(self._n_cut)]
         min_el = np.amin(np.asarray(w_loss_without_norm))
@@ -96,10 +93,13 @@ class Genetic_HB:
         self._old_best_loss = None
         self._num_gen_without_imp = 0
 
-        model_c = Model_Dataset()
-        self.train_X, self.train_Y_one_hot = model_c.get_train()
-        self.val_X, self.val_Y_one_hot = model_c.get_val()
-        self.test_X, self.test_Y_one_hot = model_c.get_test()
+        self._model_wrapper = model_wrapper
+        self.train_X, self.train_Y_one_hot = train_X, train_Y_one_hot
+        self.val_X, self.val_Y_one_hot = val_X, val_Y_one_hot
+        self.test_X, self.test_Y_one_hot = test_X, test_Y_one_hot
+        self._include_acc=include_acc
+        self._epsilon = epsilon
+        self.train_config = train_config
 
 
 
@@ -109,9 +109,12 @@ class Genetic_HB:
         function for generating the population.
         """ 
         for _ in range(self._n_ind):
-            self._c_pop.append({"ind": self._generate_random_ind(), "val_loss": None, 
-                "slope": None, "model": None, "weights": None, "F": None, "test_loss": None, "test_acc": None})
-
+            if self._include_acc:
+                self._c_pop.append({"ind": self._generate_random_ind(), "val_loss": None, 
+                "slope": None, "model": None, "weights": None, "F": None, "test_loss": None, "test_acc":None})
+            else:
+                self._c_pop.append({"ind": self._generate_random_ind(), "val_loss": None, 
+                "slope": None, "model": None, "weights": None, "F": None, "test_loss": None})
     def _generate_random_ind(self):
         """
         function for generating an individual.
@@ -369,12 +372,16 @@ class Genetic_HB:
                 else:
                     change_el = True
 
-
-        c_1 = {"ind": child_1, "val_loss": None, "slope": None, 
-                "model": None, "weights": None, "F": None, "test_loss": None, "test_acc": None}
-        c_2 = {"ind": child_2, "val_loss": None, "slope": None, 
-                "model": None, "weights": None, "F": None, "test_loss": None, "test_acc": None}
-
+        if self._include_acc:
+            c_1 = {"ind": child_1, "val_loss": None, "slope": None, 
+                    "model": None, "weights": None, "F": None, "test_loss": None, "test_acc": None}
+            c_2 = {"ind": child_2, "val_loss": None, "slope": None, 
+                    "model": None, "weights": None, "F": None, "test_loss": None, "test_acc":None}
+        else:
+            c_1 = {"ind": child_1, "val_loss": None, "slope": None, 
+                    "model": None, "weights": None, "F": None, "test_loss": None}
+            c_2 = {"ind": child_2, "val_loss": None, "slope": None, 
+                    "model": None, "weights": None, "F": None, "test_loss": None}
         return c_1, c_2
 
         
@@ -387,41 +394,48 @@ class Genetic_HB:
         :param cut is used for indicating in which step of the iteration (cut point) we are currently.
         :param i number of the individual in the population (used for creating the name)
         :param indiv is the individual
+        :param batch_size Batch size
         :param epochs is the number of epochs to run the DL model.
         :param type_pop indicates the type of pop we are evaluating (used for the name)
         :return the individual evaluated
         """
         
-        K.clear_session()
 
         ind = indiv["ind"]
         model_load = indiv["model"]
+
         
-        model_c = Model_Dataset()
+        self._model_wrapper.build_model(ind)
 
+        if model_load != None:
+            self._model_wrapper.load(model_load)
 
-        model = model_c.CNNModel(ind,10)
-
+    
 
         
         n_ep = int(epochs)
 
         if n_ep < 2:
             n_ep = 2
-        if model_load != None:
-            model = keras.models.load_model(model_load)
+       
         
-        m_name = N_EXEC + "/genetic-" + type_pop + '-model_'+str(generation)+'_'+str(i)+'_'+str(cut)+'.h5'
+        m_name = self.out_path + "/genetic-" + type_pop + '-model_'+str(generation)+'_'+str(i)+'_'+str(cut)+'.h5'
 
-        w_name = N_EXEC + "/genetic-weights-" + type_pop + '-model_'+str(generation)+'_'+str(i)+'_'+str(cut)+'.h5'
-        e_s = tf.keras.callbacks.EarlyStopping(patience=50, monitor = "val_loss")
+        w_name = self.out_path + "/genetic-weights-" + type_pop + '-model_'+str(generation)+'_'+str(i)+'_'+str(cut)+'.h5'
+       
+        #train_config = {"epochs": n_ep, "batch_size":batch_size, "callbacks": callbacks,
+        #"checkpoint_path": m_name, "verbose": 0}
 
-
-        checkpoint = ModelCheckpoint(w_name, monitor='val_loss', save_best_only=True)
+        self.train_config["epochs"]=n_ep
+        self.train_config["checkpoint_path"] = m_name
         
-        historytemp = model.fit(self.train_X, self.train_Y_one_hot, batch_size=batch_size, epochs=n_ep, 
-            validation_data=(self.val_X, self.val_Y_one_hot), callbacks = [e_s, checkpoint], verbose = 1)
+
+        historytemp = self._model_wrapper.train(self.train_X, self.train_Y_one_hot, self.val_X, self.val_Y_one_hot ,self.train_config)
+        
+
+
         history_loss = np.asarray(historytemp.history['val_loss'])
+        
         self._n_ep_total = self._n_ep_total + n_ep
         val_coef = 0
         tam_history_loss = len(history_loss)
@@ -451,16 +465,20 @@ class Genetic_HB:
         else:
             model_to_ind = m_name
             w_to_ind = w_name
-            model.save(model_to_ind)
+            self._model_wrapper.save(model_to_ind)
 
         
         
-        model_ev = keras.models.load_model(model_to_ind)
-        model_ev.load_weights(w_to_ind)
-        test_loss , test_acc = model_ev.evaluate(self.test_X, self.test_Y_one_hot, verbose = 0)
+        if self._include_acc:
+            test_loss, test_acc = self._model_wrapper.evaluate(self.test_X, self.test_Y_one_hot)
         
-        ind_ev = {'ind': ind, 'val_loss': val_loss, 'slope': val_coef, "model": model_to_ind,
-         "weights": w_to_ind, "F": None, "test loss": test_loss, "test_acc": test_acc}
+            ind_ev = {'ind': ind, 'val_loss': val_loss, 'slope': val_coef, "model": model_to_ind,
+            "weights": w_to_ind, "F": None, "test loss": test_loss, "test_acc": test_acc}
+        else:
+            test_loss = self._model_wrapper.evaluate(self.test_X, self.test_Y_one_hot)
+        
+            ind_ev = {'ind': ind, 'val_loss': val_loss, 'slope': val_coef, "model": model_to_ind,
+            "weights": w_to_ind, "F": None, "test loss": test_loss}
 
 
         return ind_ev
@@ -519,7 +537,8 @@ class Genetic_HB:
 
         :param geneartion is used for indicating the generation and properly save the individual.
         :param batch_size indicates the batch_size for evaluating
-        :param n_el_to_ev indicates the number of individuals to ev at each step.
+        :param n_epochs indicates the number of epochs
+        :param n_el_to_ev indicates the number of individuals to ev at each step
         :param pop is the current pop
         :param type_pop indicates the type of pop we are evaluating (used for the name)
         :return the population evaluated
@@ -529,13 +548,13 @@ class Genetic_HB:
             if i != len(n_el_to_ev) - 1:
                 #regarding name of models, only in first pass create a new name
                 #Lazy nomenclature
-                min_loss = INF
-                max_loss = -1* INF
+                min_loss = self.INF
+                max_loss = -1* self.INF
 
-                min_slope = INF
-                max_slope = -1 * INF
+                min_slope = self.INF
+                max_slope = -1 * self.INF
                 for j in range(n_el_to_ev[i]):
-                    pop[j] = self._evaluate_ind(generation, i, j, pop[j], batch_size, n_epochs[i], type_pop)
+                    pop[j] = self._evaluate_ind(generation, i, j, pop[j], batch_size, n_epochs[i],type_pop)
                     if pop[j]["val_loss"] < min_loss:
                         min_loss = pop[j]["val_loss"]
                     if pop[j]["val_loss"] > max_loss:
@@ -547,7 +566,7 @@ class Genetic_HB:
 
                 #Not evaluated, poor ind
                 for el in pop[n_el_to_ev[i]:]:
-                    el["F"] = INF
+                    el["F"] = self.INF
                 
 
 
@@ -573,7 +592,7 @@ class Genetic_HB:
                 for j in range(n_el_to_ev[i]):
                     pop[j] = self._evaluate_ind(generation, i, j, pop[j], batch_size, n_epochs[i], type_pop)
                 for el in pop[n_el_to_ev[i]:]:
-                    el["F"] = INF
+                    el["F"] = self.INF
 
                 for el in pop[:n_el_to_ev[i]]:
                     el["F"] = el["val_loss"]
@@ -641,7 +660,8 @@ class Genetic_HB:
     def _first_run(self, batch_size, n_epochs, n_el_to_ev, n_el_to_ev_child):
         """
         function for running the first generation.
-        :param batch_size and n_epochs indicate the batch_size and epochs for evaluating the model.
+        :param batch_size indicates the batch size for evaluating the model
+        :param n_epochs indicates the number of epochs
         :param n_el_to_ev indicates the number of elements to evaluate from parent and offspring populations.
            """
         self._c_pop = self._eval_process(0, batch_size, n_epochs, n_el_to_ev,
@@ -668,8 +688,8 @@ class Genetic_HB:
 
 
         if self._options_mut != None:
-            self._type_m = options_mut[0]["type_m"]
-            self._mut_percent = options_mut[0]["mut_percent"]
+            self._type_m = self._options_mut[0]["type_m"]
+            self._mut_percent = self._options_mut[0]["mut_percent"]
 
         tam_c_pop = len(self._c_pop)
 
@@ -720,7 +740,7 @@ class Genetic_HB:
 
 
         
-        mypath = N_EXEC
+        mypath = self.out_path
         allfiles = [f for f in os.listdir(mypath) if os.path.isfile(os.path.join(mypath, f))]
         self._hof = self._c_pop[0:self._hof_size]
         self._best = self._hof[0]
@@ -729,7 +749,7 @@ class Genetic_HB:
         best_w_to = self._best["weights"]
         #Remove unnecesary
         for f in allfiles:
-            complete_name = N_EXEC+"/"+f
+            complete_name = self.out_path+"/"+f
             if best_model_to != complete_name and best_w_to != complete_name:
                 if os.path.exists(complete_name):
                     os.remove(complete_name)
@@ -739,7 +759,8 @@ class Genetic_HB:
     def run_evol(self, batch_size, max_epochs):
         """
         function for running all the algorithm.
-        :param batch_size and max_epochs indicate the batch_size and epochs for evaluating the model.
+        :param batch_size indicates the batch size.
+        :param max_epochs indicates the maximum of epochs for training.
            """
         t1 = time.time()
         #First generation
@@ -779,8 +800,8 @@ class Genetic_HB:
             max_gen = None
 
             if self._options_mut != None:
-                self._type_m = options_mut[option_mut_to_choice]["type_m"]
-                self._mut_percent = options_mut[option_mut_to_choice]["mut_percent"]
+                self._type_m = self._options_mut[option_mut_to_choice]["type_m"]
+                self._mut_percent = self._options_mut[option_mut_to_choice]["mut_percent"]
                     
 
             
@@ -836,19 +857,20 @@ class Genetic_HB:
             self._best = self._hof[0]
             self._c_child_pop = []
 
-            mypath = N_EXEC
+            mypath = self.out_path
             allfiles = [f for f in os.listdir(mypath) if os.path.isfile(os.path.join(mypath, f))]
             best_model_to = self._best["model"]
             best_w_to = self._best["weights"]
             for f in allfiles:
-                complete_name = N_EXEC+"/"+f
+                complete_name = self.out_path+"/"+f
                 if best_model_to != complete_name and best_w_to != complete_name:
                     if os.path.exists(complete_name):
                         os.remove(complete_name)
 
             new_best_losses = [h["val_loss"] for h in self._hof] 
             new_best_loss_avg = sum(new_best_losses)/self._hof_size
-            epsilon = 0.0005
+            epsilon = self._epsilon
+            
             if new_best_loss_avg >= (old_best_loss_avg - epsilon):
                 self._num_gen_without_imp = self._num_gen_without_imp + 1
             else:
@@ -879,43 +901,7 @@ class Genetic_HB:
         t2 = time.time()
         print("time: ", t2-t1)
             
-        
-
-if __name__ == "__main__":
-
-    cut_point_options = [3, 5]
-
-    t_at = ["int", "int", "int", "int", "int", "int", "cat", "float", "float"]
-    ranges= [(32, 256), (32, 256), (32,256), (2,4), (2,4), (2,4), (0, 1, 2),  (0.1,0.4), (0.1,0.4),
-     ]
-
-    n_at = 9
-    max_ind = 20
-    n_gen = 100000
-    n_cut = 3
-    cut_el = 3
-    delta = 3
-
-    options_mut = []
-    options_mut.append({"type_m": 1, "mut_percent": 0.05})
-    options_mut.append({"type_m": 1, "mut_percent": 0.15})
-
-    options_mut.append({"type_m": 2, "mut_percent": 0.1})
-    options_mut.append({"type_m": 2, "mut_percent": 0.2})
 
 
-    def f_enf(x, init):
-        return x**(1.5)+init
-
-
-    g_hb = Genetic_HB(t_at, ranges, n_at, n_ind = max_ind, generations = n_gen, n_cut = n_cut
-        , cut_el = cut_el, cut_point_options= cut_point_options, 
-        w_init = 0.6, type_m = 2, f_enf = f_enf, options_mut = options_mut, seed = seed, delta=delta)
 
     
-
-
-    batch_size = 64
-    max_epochs = 85
-
-    g_hb.run_evol(batch_size, max_epochs)
