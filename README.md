@@ -16,11 +16,11 @@ The example folder includes an example using GAMF2O
 
 Git can be easily installed on widely used operating systems such as Windows, Mac, and Linux. It is worth noting that Git comes pre-installed on the majority of Mac and Linux machines by default.
 
-<pre> ```bash $ git clone https://github.com/anmoya2/GAMF2O ``` </pre>
+<pre> $ git clone https://github.com/anmoya2/GAMF2O </pre>
 
 
-<pre>      
-	$ cd GAMF2O
+<pre>     
+    $ cd GAMF2O
     $ python -m pip install --upgrade pip # To update pip
     $ python -m pip install --upgrade build # To update build
     $ python -m build
